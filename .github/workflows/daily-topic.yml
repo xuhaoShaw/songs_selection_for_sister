@@ -1,0 +1,38 @@
+name: daily-topic-analysis
+
+on:
+  schedule:
+    - cron: "0 15 * * *"          # UTC 15:00 = 北京时间 23:00
+  workflow_dispatch: {}            # 允许在网页上手动触发
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily topic analysis
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: python daily_topic_analysis.py
+
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: topic-report
+          path: daily-analysis/*.html
+          if-no-files-found: ignore
+          retention-days: 30
