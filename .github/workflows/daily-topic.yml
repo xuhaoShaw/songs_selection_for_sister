@@ -27,6 +27,8 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          LLM_MODEL: deepseek-v4-pro
+          ENABLE_SEARCH: "1"
         run: python daily_topic_analysis.py
 
       - name: Upload HTML report
