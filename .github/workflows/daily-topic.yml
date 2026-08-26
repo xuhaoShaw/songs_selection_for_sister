@@ -2,7 +2,7 @@ name: daily-topic-analysis
 
 on:
   schedule:
-    - cron: "0 15 * * *"          # UTC 15:00 = 北京时间 23:00
+    - cron: "0 10 * * *"          # UTC 15:00 = 北京时间 23:00
   workflow_dispatch: {}            # 允许在网页上手动触发
 
 permissions:
