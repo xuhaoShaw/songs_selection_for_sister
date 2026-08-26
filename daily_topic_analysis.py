@@ -5,12 +5,13 @@
   阶段一：调用 LLM 生成 5 首选题 -> 渲染 HTML 报告落盘
   阶段二：读取报告 -> 生成摘要 -> 推送飞书群（webhook 或 企业应用 API）
 
-纯标准库 + requests，不依赖 lark-cli，可部署到 cron / GitHub Actions / 云函数。
+依赖 requests + openai，不依赖 lark-cli，可部署到 cron / GitHub Actions / 云函数。
 
 环境变量：
-  DEEPSEEK_API_KEY      必填，LLM 密钥（OpenAI/DeepSeek 兼容即可）
-  LLM_BASE_URL          可选，默认 https://api.deepseek.com/v1
-  LLM_MODEL             可选，默认 deepseek-chat
+  DEEPSEEK_API_KEY      必填，DeepSeek API Key
+  LLM_BASE_URL          可选，默认 https://api.deepseek.com
+  LLM_MODEL             可选，默认 deepseek-v4-pro（DeepSeek 当前最强模型）
+  ENABLE_SEARCH         可选，1=开启联网搜索(web_search 工具)，0=关闭，默认 1
   REPORT_DIR            可选，报告目录，默认 daily-analysis
   FEISHU_WEBHOOK        可选，飞书群自定义机器人 webhook（推荐）
   FEISHU_APP_ID         可选，企业自建应用 app_id（webhook 缺失时用）
@@ -29,11 +30,18 @@ except ImportError:  # pragma: no cover
     sys.stderr.write("缺少依赖 requests，请先执行: pip install requests\n")
     raise
 
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover
+    sys.stderr.write("缺少依赖 openai，请先执行: pip install openai\n")
+    raise
+
 # ----------------------------- 配置 -----------------------------
 REPORT_DIR = os.environ.get("REPORT_DIR", "daily-analysis")
 LLM_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-chat")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com")
+LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4-pro")
+ENABLE_SEARCH = os.environ.get("ENABLE_SEARCH", "1") != "0"
 FEISHU_WEBHOOK = os.environ.get("FEISHU_WEBHOOK", "")
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
@@ -60,21 +68,16 @@ def call_llm(prompt: str) -> str:
         f"若无法检索实时热歌，可用兜底曲库：{BACKUP_SONGS}。"
         "只输出 JSON，不要输出任何解释文字或 markdown 代码块。"
     )
-    resp = requests.post(
-        f"{LLM_BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
-        json={
-            "model": LLM_MODEL,
-            "messages": [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.8,
-        },
-        timeout=120,
+    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+    tools = [{"type": "web_search"}] if ENABLE_SEARCH else None
+    resp = client.responses.create(
+        model=LLM_MODEL,
+        instructions=sys_prompt,
+        input=prompt,
+        tools=tools,
+        temperature=0.8,
     )
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    return resp.output_text
 
 
 def parse_json(text: str):
