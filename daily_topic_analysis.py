@@ -13,6 +13,7 @@
   LLM_MODEL             可选，默认 deepseek-v4-pro（DeepSeek 当前最强模型）
   ENABLE_SEARCH         可选，1=开启联网搜索(web_search 工具)，0=关闭，默认 1
   REPORT_DIR            可选，报告目录，默认 daily-analysis
+  HISTORY_FILE          可选，持久化歌曲历史路径，默认 song-history.json
   FEISHU_WEBHOOK        可选，飞书群自定义机器人 webhook（推荐）
   FEISHU_APP_ID         可选，企业自建应用 app_id（webhook 缺失时用）
   FEISHU_APP_SECRET     可选，企业自建应用 app_secret
@@ -23,6 +24,9 @@ import json
 import os
 import re
 import sys
+import tempfile
+import unicodedata
+from zoneinfo import ZoneInfo
 
 try:
     import requests
@@ -38,6 +42,7 @@ except ImportError:  # pragma: no cover
 
 # ----------------------------- 配置 -----------------------------
 REPORT_DIR = os.environ.get("REPORT_DIR", "daily-analysis")
+HISTORY_FILE = os.environ.get("HISTORY_FILE", "song-history.json")
 LLM_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com")
 LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4-pro")
@@ -56,16 +61,80 @@ BLOGGER_PROFILE = (
 BACKUP_SONGS = "阿楚姑娘、甲乙丙丁、乱徵、心似烟火、亲爱的你啊"
 
 
+def today_date() -> datetime.date:
+    """统一按北京时间划分推荐日期，与运行机器的时区无关。"""
+    return datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date()
+
+
+def song_key(name: str) -> str:
+    """按歌名去重；换歌手、Live/清唱版本仍视作同一首歌。"""
+    name = unicodedata.normalize("NFKC", name).casefold().strip()
+    name = re.sub(
+        r"[（(【\[]\s*(?:live|现场(?:版)?|清唱(?:版)?|翻唱(?:版)?|cover|acoustic|伴奏版)\s*[）)】\]]",
+        "", name,
+    )
+    return "".join(c for c in name if c.isalnum())
+
+
+def load_history() -> dict:
+    if not os.path.exists(HISTORY_FILE):
+        return {"version": 1, "entries": []}
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        history = json.load(f)
+    if not isinstance(history, dict) or history.get("version") != 1 or not isinstance(history.get("entries"), list):
+        raise ValueError("歌曲历史格式错误，停止推荐以免重复")
+    for entry in history["entries"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("songs"), list):
+            raise ValueError("歌曲历史记录格式错误")
+        datetime.date.fromisoformat(entry["date"])
+        for song in entry["songs"]:
+            if not isinstance(song, dict) or not isinstance(song.get("song"), str) or not song_key(song["song"]):
+                raise ValueError("歌曲历史中的歌名无效")
+    return history
+
+
+def recent_songs(history: dict, today: datetime.date) -> dict:
+    cutoff = today - datetime.timedelta(days=6)
+    excluded = {}
+    for entry in history["entries"]:
+        if cutoff <= datetime.date.fromisoformat(entry["date"]) <= today:
+            for song in entry["songs"]:
+                excluded[song_key(song["song"])] = song["song"]
+    return excluded
+
+
+def save_history(history: dict, songs: list, today: datetime.date) -> None:
+    """只记录推送成功的歌曲，保留 30 天；原子替换防止文件写到一半。"""
+    entries = [entry for entry in history["entries"]
+               if datetime.date.fromisoformat(entry["date"]) >= today - datetime.timedelta(days=29)]
+    entries.append({"date": today.isoformat(), "songs": [
+        {"song": s["song"], "artist": s["artist"]} for s in songs
+    ]})
+    path = os.path.abspath(HISTORY_FILE)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(path), delete=False) as f:
+            tmp_path = f.name
+            json.dump({"version": 1, "entries": entries}, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 # ----------------------------- 阶段一 -----------------------------
 def call_llm(prompt: str) -> str:
     if not LLM_API_KEY:
         raise RuntimeError("未设置 DEEPSEEK_API_KEY 环境变量")
 
-    today = datetime.date.today().strftime("%Y年%m月%d日")
+    today = today_date().strftime("%Y年%m月%d日")
     sys_prompt = (
         "你是小红书楼道清唱翻唱博主的选题分析师。"
         f"今天是{today}。博主画像：{BLOGGER_PROFILE} "
-        f"若无法检索实时热歌，可用兜底曲库：{BACKUP_SONGS}。"
+        f"若无法检索实时热歌，可参考曲库：{BACKUP_SONGS}，也可选择其他已知歌曲。"
+        "必须遵守用户给出的禁选歌单；参考曲库中的歌曲也不能违反禁选规则。"
         "只输出 JSON，不要输出任何解释文字或 markdown 代码块。"
     )
     client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
@@ -93,24 +162,55 @@ def parse_json(text: str):
     return json.loads(text)
 
 
-def gen_topics() -> dict:
-    prompt = (
-        "请为本博主生成今日 5 首翻唱选题，返回 JSON，结构如下："
+def gen_topics(excluded=None) -> dict:
+    blocked = dict(excluded or {})
+    selected = []
+    action = ""
+    template = (
+        "请为本博主生成今日 {count} 首翻唱选题，返回 JSON，结构如下："
         '{"action":"一条行动建议",'
         '"songs":[{"song":"歌名","artist":"歌手","reason":"一句话推荐理由",'
         '"title":"首推标题（有情绪钩子、反模板）","tags":["标签1","标签2","标签3"]}]}'
         "要求：标题每篇独一无二，禁止出现『翻唱《X》，有没有唱进你心里』式模板；"
         "标签建立场景词矩阵（#楼道清唱/#清唱/#翻唱）+ 情绪词 + 歌名/歌手词。"
     )
-    raw = call_llm(prompt)
-    data = parse_json(raw)
-    if not isinstance(data.get("songs"), list) or not data["songs"]:
-        raise RuntimeError("LLM 返回的选题为空")
-    return data
+    # 保留合格歌曲，只补选缺额；最多调用三次，绝不降级发送重复歌曲。
+    for _ in range(3):
+        prompt = template.replace("{count}", str(5 - len(selected)))
+        prompt += (
+            "以下歌曲在最近一周已推送或本轮已选中，禁止推荐，包括不同歌手的翻唱、Live 和清唱版本："
+            + json.dumps(list(blocked.values()), ensure_ascii=False)
+            + "。请扩展选曲范围，返回真实存在且互不重复的歌曲。"
+        )
+        raw = call_llm(prompt)
+        try:
+            data = parse_json(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("songs"), list):
+            continue
+        if isinstance(data.get("action"), str) and data["action"].strip():
+            action = data["action"].strip()
+        for song in data["songs"]:
+            if not isinstance(song, dict):
+                continue
+            if any(not isinstance(song.get(field), str) or not song[field].strip()
+                   for field in ("song", "artist", "reason", "title")):
+                continue
+            if not isinstance(song.get("tags"), list) or any(not isinstance(tag, str) for tag in song["tags"]):
+                continue
+            key = song_key(song["song"])
+            if not key or key in blocked:
+                continue
+            selected.append(song)
+            blocked[key] = song["song"]
+            if len(selected) == 5:
+                return {"action": action, "songs": selected}
+    raise RuntimeError(f"三次选曲后仅获得 {len(selected)} 首合格歌曲，未能满足一周内不重复的要求")
 
 
 def render_html(data: dict) -> str:
-    date = datetime.date.today()
+    date = today_date()
     date_cn = date.strftime("%Y.%m.%d")
     title = f"{date.strftime('%Y%m%d')} 每日选题分析"
 
@@ -149,14 +249,15 @@ body{{font-family:-apple-system,'Microsoft YaHei',sans-serif;background:#fdf8f4;
 
 # ----------------------------- 阶段二 -----------------------------
 def build_summary(data: dict, link: str) -> str:
-    date_cn = f"{datetime.date.today().month}月{datetime.date.today().day}日"
+    today = today_date()
+    date_cn = f"{today.month}月{today.day}日"
     lines = [f"【{date_cn} 选题分析】", "推荐歌曲："]
     for i, s in enumerate(data["songs"], 1):
         lines.append(f'{i}. {s["artist"]}《{s["song"]}》- "{s["title"]}"')
     lines.append(f'行动：{data.get("action", "")}')
     if link:
         lines.append(f"详细报告：{link}")
-    return "\n".join(lines)[:300]
+    return "\n".join(lines)
 
 
 def _tenant_token() -> str:
@@ -208,9 +309,11 @@ def main(event=None, context=None) -> dict:
     result = {"ok": True, "report": None, "push": None}
 
     try:
-        data = gen_topics()
+        today = today_date()
+        history = load_history()
+        data = gen_topics(recent_songs(history, today))
         html = render_html(data)
-        fname = datetime.date.today().strftime("%Y%m%d_选题分析.html")
+        fname = today.strftime("%Y%m%d_选题分析.html")
         fpath = os.path.join(REPORT_DIR, fname)
         with open(fpath, "w", encoding="utf-8") as f:
             f.write(html)
@@ -226,8 +329,16 @@ def main(event=None, context=None) -> dict:
         send_feishu(summary)
         result["push"] = "ok"
     except Exception as e:  # noqa: BLE001
+        result["ok"] = False
         result["push"] = f"推送失败: {e}"
         _fail_file(f"推送失败: {e}\n\n摘要内容:\n{summary}")
+        return result
+    try:
+        save_history(history, data["songs"], today)
+    except Exception as e:  # noqa: BLE001
+        result["ok"] = False
+        result["history"] = f"推送已成功，但保存历史失败: {e}"
+        _fail_file(result["history"])
     return result
 
 
@@ -237,4 +348,6 @@ def _fail_file(msg: str) -> None:
 
 
 if __name__ == "__main__":
-    print(json.dumps(main(), ensure_ascii=False, indent=2))
+    result = main()
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    sys.exit(0 if result["ok"] else 1)

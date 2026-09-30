@@ -1,0 +1,4 @@
+__pycache__/
+.venv/
+daily-analysis/
+song-history.json
