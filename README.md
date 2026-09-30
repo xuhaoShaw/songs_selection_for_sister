@@ -24,7 +24,7 @@ GitHub Actions 使用 `codex/song-history` 独立分支保存 `song-history.json
 
 ## 配置与运行
 
-Actions 配置仓库 Secrets：`DEEPSEEK_API_KEY`、`FEISHU_WEBHOOK`。默认定时为北京时间每天 01:27，也支持手动触发。
+Actions 配置仓库 Secrets：`DEEPSEEK_API_KEY`、`FEISHU_WEBHOOK`。默认定时为北京时间每天 05:47，也支持手动触发。
 
 本地安装 `requirements.txt` 后运行 `python daily_topic_analysis.py`。通过环境变量配置密钥；`HISTORY_FILE` 默认 `song-history.json`，`REPORT_DIR` 默认 `daily-analysis`。本地/云函数运行时应将历史文件放在持久存储，并保证只有一个实例同时运行。
 
