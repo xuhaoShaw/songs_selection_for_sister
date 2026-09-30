@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import daily_topic_analysis as app
 
@@ -17,6 +17,61 @@ def song(name, artist="歌手"):
 
 def response(*names):
     return json.dumps({"action": "录一首", "songs": [song(name) for name in names]}, ensure_ascii=False)
+
+
+class ModelVerseTests(unittest.TestCase):
+    def setUp(self):
+        p = patch.object(app, "LLM_API_KEY", "test-key")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_chat_completions_request_and_response(self):
+        resp = Mock()
+        resp.json.return_value = {"choices": [{"finish_reason": "stop", "message": {"content": "OK"}}]}
+        with patch.object(app.requests, "post", return_value=resp) as post, \
+                patch.object(app, "LLM_BASE_URL", "https://api.modelverse.cn/v1/"), \
+                patch.object(app, "LLM_MODEL", "deepseek-v4.1-flash"):
+            self.assertEqual(app.call_llm("只回复 OK"), "OK")
+        resp.raise_for_status.assert_called_once()
+        self.assertEqual(post.call_args.args[0], "https://api.modelverse.cn/v1/chat/completions")
+        args = post.call_args.kwargs
+        self.assertEqual(args["headers"]["Authorization"], "Bearer test-key")
+        self.assertEqual(args["json"]["model"], "deepseek-v4.1-flash")
+        self.assertEqual(args["json"]["messages"][0]["role"], "system")
+        self.assertEqual(args["json"]["messages"][1], {"role": "user", "content": "只回复 OK"})
+        self.assertEqual(args["json"]["stream"], False)
+        self.assertEqual(args["json"]["max_tokens"], 4096)
+        self.assertNotIn("tools", args["json"])
+        self.assertEqual(args["timeout"], 120)
+
+    def test_missing_key_stops_before_network_call(self):
+        with patch.object(app, "LLM_API_KEY", ""), patch.object(app.requests, "post") as post:
+            with self.assertRaisesRegex(RuntimeError, "MODELVERSE_API_KEY"):
+                app.call_llm("选曲")
+            post.assert_not_called()
+
+    def test_http_failure_is_not_treated_as_model_output(self):
+        resp = Mock()
+        resp.raise_for_status.side_effect = app.requests.HTTPError("401 Unauthorized")
+        with patch.object(app.requests, "post", return_value=resp):
+            with self.assertRaises(app.requests.HTTPError):
+                app.call_llm("选曲")
+        resp.json.assert_not_called()
+
+    def test_empty_and_truncated_outputs_fail_clearly(self):
+        payloads = [
+            {}, {"choices": []}, {"choices": [None]},
+            {"choices": [{"message": {"content": None}}]},
+            {"choices": [{"message": {"content": "  "}}]},
+            {"choices": [{"finish_reason": "length", "message": {"content": "半截 JSON"}}]},
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                resp = Mock()
+                resp.json.return_value = payload
+                with patch.object(app.requests, "post", return_value=resp):
+                    with self.assertRaises(RuntimeError):
+                        app.call_llm("选曲")
 
 
 class SelectionTests(unittest.TestCase):

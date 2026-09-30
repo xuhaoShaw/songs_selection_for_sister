@@ -5,13 +5,12 @@
   阶段一：调用 LLM 生成 5 首选题 -> 渲染 HTML 报告落盘
   阶段二：读取报告 -> 生成摘要 -> 推送飞书群（webhook 或 企业应用 API）
 
-依赖 requests + openai，不依赖 lark-cli，可部署到 cron / GitHub Actions / 云函数。
+依赖 requests，不依赖 lark-cli，可部署到 cron / GitHub Actions / 云函数。
 
 环境变量：
-  DEEPSEEK_API_KEY      必填，DeepSeek API Key
-  LLM_BASE_URL          可选，默认 https://api.deepseek.com
-  LLM_MODEL             可选，默认 deepseek-v4-pro（DeepSeek 当前最强模型）
-  ENABLE_SEARCH         可选，1=开启联网搜索(web_search 工具)，0=关闭，默认 1
+  MODELVERSE_API_KEY    必填，ModelVerse API Key
+  LLM_BASE_URL          可选，默认 https://api.modelverse.cn/v1
+  LLM_MODEL             可选，默认 deepseek-v4.1-flash
   REPORT_DIR            可选，报告目录，默认 daily-analysis
   HISTORY_FILE          可选，持久化歌曲历史路径，默认 song-history.json
   FEISHU_WEBHOOK        可选，飞书群自定义机器人 webhook（推荐）
@@ -34,19 +33,12 @@ except ImportError:  # pragma: no cover
     sys.stderr.write("缺少依赖 requests，请先执行: pip install requests\n")
     raise
 
-try:
-    from openai import OpenAI
-except ImportError:  # pragma: no cover
-    sys.stderr.write("缺少依赖 openai，请先执行: pip install openai\n")
-    raise
-
 # ----------------------------- 配置 -----------------------------
 REPORT_DIR = os.environ.get("REPORT_DIR", "daily-analysis")
 HISTORY_FILE = os.environ.get("HISTORY_FILE", "song-history.json")
-LLM_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com")
-LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4-pro")
-ENABLE_SEARCH = os.environ.get("ENABLE_SEARCH", "1") != "0"
+LLM_API_KEY = os.environ.get("MODELVERSE_API_KEY", "")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.modelverse.cn/v1")
+LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash")
 FEISHU_WEBHOOK = os.environ.get("FEISHU_WEBHOOK", "")
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
@@ -127,7 +119,7 @@ def save_history(history: dict, songs: list, today: datetime.date) -> None:
 # ----------------------------- 阶段一 -----------------------------
 def call_llm(prompt: str) -> str:
     if not LLM_API_KEY:
-        raise RuntimeError("未设置 DEEPSEEK_API_KEY 环境变量")
+        raise RuntimeError("未设置 MODELVERSE_API_KEY 环境变量")
 
     today = today_date().strftime("%Y年%m月%d日")
     sys_prompt = (
@@ -135,18 +127,39 @@ def call_llm(prompt: str) -> str:
         f"今天是{today}。博主画像：{BLOGGER_PROFILE} "
         f"若无法检索实时热歌，可参考曲库：{BACKUP_SONGS}，也可选择其他已知歌曲。"
         "必须遵守用户给出的禁选歌单；参考曲库中的歌曲也不能违反禁选规则。"
+        "根据已知歌曲选题，不要声称检索过实时热榜。"
         "只输出 JSON，不要输出任何解释文字或 markdown 代码块。"
     )
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-    tools = [{"type": "web_search"}] if ENABLE_SEARCH else None
-    resp = client.responses.create(
-        model=LLM_MODEL,
-        instructions=sys_prompt,
-        input=prompt,
-        tools=tools,
-        temperature=0.8,
+    resp = requests.post(
+        f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {LLM_API_KEY}",
+        },
+        json={
+            "model": LLM_MODEL,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "max_tokens": 4096,
+        },
+        timeout=120,
     )
-    return resp.output_text
+    resp.raise_for_status()
+    payload = resp.json()
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise RuntimeError("ModelVerse 返回缺少 choices")
+    choice = choices[0]
+    if choice.get("finish_reason") == "length":
+        raise RuntimeError("ModelVerse 输出被 max_tokens 截断，无法生成完整选题")
+    message = choice.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("ModelVerse 返回的消息内容为空")
+    return content
 
 
 def parse_json(text: str):
