@@ -1,1 +1,30 @@
-{"version":1,"entries":[]}
+{
+  "version": 1,
+  "entries": [
+    {
+      "date": "2026-09-30",
+      "songs": [
+        {
+          "song": "阿楚姑娘",
+          "artist": "梁凡"
+        },
+        {
+          "song": "海底",
+          "artist": "一支榴莲"
+        },
+        {
+          "song": "胡广生",
+          "artist": "任素汐"
+        },
+        {
+          "song": "云烟成雨",
+          "artist": "房东的猫"
+        },
+        {
+          "song": "写给黄淮",
+          "artist": "解忧邵帅"
+        }
+      ]
+    }
+  ]
+}
