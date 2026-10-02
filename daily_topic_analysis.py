@@ -194,9 +194,17 @@ def gen_topics(excluded=None, holiday_context=None) -> dict:
         '"title":"首推标题（有情绪钩子、反模板）","tags":["标签1","标签2","标签3"],'
         '"is_theme":false,"theme_reason":"与主主题的关联及清唱适配理由"}],'
         '"lead":{"song":"首推歌名","artist":"首推歌手",'
-        '"reason":"明确当天关联、女声清唱适配性和首推理由"}}'
+        '"reason":"明确当天关联、女声清唱适配性和首推理由",'
+        '"singing_segment":"建议演唱哪个段落、如何起止以及情绪处理",'
+        '"opening":"可执行的视频开场方式",'
+        '"practice_tips":"练习难点和两到三个具体准备步骤",'
+        '"title_options":["另一种标题角度1","另一种标题角度2"]}}'
         "要求：标题每篇独一无二，禁止出现『翻唱《X》，有没有唱进你心里』式模板；"
         "标签建立场景词矩阵（#楼道清唱/#清唱/#翻唱）+ 情绪词 + 歌名/歌手词。"
+        "只为一首主推补充详细拍摄建议，四首副推保持原有歌曲字段。"
+        "主推说明需具体但简洁，各详细字段控制在一到两句话；"
+        "未核实具体音源时不要编造时间戳、歌词、调性或音域；"
+        "不要编造博主的个人经历，开场建议以真实表达或直接开唱为主。"
     )
     # 保留日常候选作为降级备选；满五首但主题不足时继续补选主题。
     for _ in range(3):
@@ -278,6 +286,7 @@ def gen_topics(excluded=None, holiday_context=None) -> dict:
             ordered.append(song)
     actual = sum(s["is_theme"] for s in ordered)
     warning = f"主题配额不足：目标至少 {quota} 首，实际 {actual} 首；已用其他合格歌曲补齐五首。" if actual < quota else ""
+    lead_details = _make_lead_details(first, lead if lead_reason else None)
     if not lead_reason:
         association = first["theme_reason"] or (
             "本日主题候选不足，选择日常备选" if context["theme"] else "今日为日常选题"
@@ -287,7 +296,43 @@ def gen_topics(excluded=None, holiday_context=None) -> dict:
         "action": action, "songs": ordered, "holiday_context": context,
         "theme_count": actual, "quota_warning": warning,
         "lead": {"song": first["song"], "artist": first["artist"], "reason": lead_reason},
+        "lead_details": lead_details,
     }
+
+
+def _make_lead_details(song: dict, source=None) -> dict:
+    """详细建议只绑定合格主推；缺失字段使用不依赖音源的保守建议。"""
+    source = source if isinstance(source, dict) else {}
+    defaults = {
+        "singing_segment": "选择自己熟悉、能稳定清唱的副歌或情绪集中段落；试录后确定起止，不强行挑战高音。",
+        "opening": "直接从熟悉段落开唱，先保证第一句的音准和情绪，避免过长铺垫。",
+        "practice_tips": "先用舒适音区试唱，标记换气位置，再录一遍检查音准与咬字；不舒服时换段落或副推歌曲。",
+    }
+    result = {}
+    for key, fallback in defaults.items():
+        value = source.get(key)
+        result[key] = value.strip() if isinstance(value, str) and value.strip() else fallback
+    titles = source.get("title_options")
+    result["title_options"] = []
+    if isinstance(titles, list):
+        for title in titles:
+            if isinstance(title, str) and title.strip() and title.strip() != song["title"]:
+                title = title.strip()
+                if title not in result["title_options"]:
+                    result["title_options"].append(title)
+                if len(result["title_options"]) == 2:
+                    break
+    return result
+
+
+def _lead_detail_items(data: dict) -> list:
+    details = _make_lead_details(data["songs"][0], data.get("lead_details"))
+    items = [("演唱段落", details["singing_segment"]),
+             ("视频开场", details["opening"]),
+             ("练习准备", details["practice_tips"])]
+    for i, title in enumerate(details["title_options"], 1):
+        items.append((f"其他标题 {i}", title))
+    return items
 
 
 def _theme_label(data: dict) -> str:
@@ -310,8 +355,13 @@ def render_html(data: dict) -> str:
         )
         theme_reason = f'<div class="reason">主题关联（模型判断）：{escape(s["theme_reason"])}</div>' if s.get("is_theme") else ""
         lead_html = f'<div class="action">首推说明：{escape(data.get("lead", {}).get("reason", s["reason"]))}</div>' if i == 1 else ""
+        if i == 1:
+            lead_html += "".join(
+                f'<div class="lbl">{label}</div><div class="reason">{escape(value)}</div>'
+                for label, value in _lead_detail_items(data)
+            )
         cards.append(
-            f"""<div class="card"><div class="rank">{'今日首推' if i == 1 else f'备选 {i - 1}'}</div>
+            f"""<div class="card"><div class="rank">{'今日主推' if i == 1 else f'副推 {i - 1}'}</div>
 <div class="head">{escape(s['song'])}<span class="art"> {escape(s['artist'])}</span></div>
 <div class="reason">{escape(s['reason'])}</div>{theme_reason}{lead_html}
 <div class="lbl">建议标题</div><div class="ttl">“{escape(s['title'])}”</div>
@@ -351,10 +401,13 @@ def build_summary(data: dict, link: str) -> str:
     if data.get("quota_warning"):
         lines.append(data["quota_warning"])
     for i, s in enumerate(data["songs"], 1):
-        rank = "今日首推" if i == 1 else f"备选 {i - 1}"
+        rank = "今日主推" if i == 1 else f"副推 {i - 1}"
         lines.append(f'{rank}：{s["artist"]}《{s["song"]}》- "{s["title"]}"')
         if i == 1:
             lines.append(f'首推说明：{data.get("lead", {}).get("reason", s["reason"])}')
+            lines.extend(f"{label}：{value}" for label, value in _lead_detail_items(data))
+            if s.get("tags"):
+                lines.append(f'主推标签：{" ".join(s["tags"])}')
         if s.get("is_theme"):
             lines.append(f'主题关联（模型判断）：{s["theme_reason"]}')
     preview = data.get("holiday_context", {}).get("tomorrow_preview", "")

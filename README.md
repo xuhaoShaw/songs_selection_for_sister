@@ -34,6 +34,8 @@ GitHub Actions 使用 `codex/song-history` 独立分支保存 `song-history.json
 
 ## 配置与运行
 
+推送采用「1 首主推 + 4 首副推」。主推除首推理由、原建议标题外，增加演唱段落、视频开场、练习准备、最多两个其他标题和标签（HTML 保留原标签展示）。这些建议和最终主推歌曲绑定；补选后不会沿用另一首歌的详细建议。字段缺失时使用通用试唱建议，不编造时间戳、歌词或音域。副推保留原有歌曲、标题及主题关联信息，HTML 仍展示原推荐理由和标签。详细建议与选曲在同次模型请求中生成，不新增调用次数。
+
 Actions 配置仓库 Secrets：`MODELVERSE_API_KEY`、`FEISHU_WEBHOOK`。默认定时为北京时间每天 05:47，也支持手动触发。
 
 选题接口使用 ModelVerse 的 `https://api.modelverse.cn/v1/chat/completions`，模型为 `deepseek-v4.1-flash`，通过 Bearer 密钥鉴权，非流式返回。`LLM_BASE_URL` 默认 `https://api.modelverse.cn/v1`，`LLM_MODEL` 可覆盖默认模型。旧的 `DEEPSEEK_API_KEY` 不再使用。

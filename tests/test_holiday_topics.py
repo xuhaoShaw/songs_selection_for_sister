@@ -110,7 +110,7 @@ class HolidaySelectionTests(unittest.TestCase):
         self.assertEqual(data["theme_count"], 0)
         self.assertIn("目标至少 2 首，实际 0 首", data["quota_warning"])
         for rendered in (app.build_summary(data, ""), app.render_html(data)):
-            self.assertLess(rendered.index("主题配额不足"), rendered.index("今日首推"))
+            self.assertLess(rendered.index("主题配额不足"), rendered.index("今日主推"))
 
     def test_one_theme_is_preferred_even_if_quota_not_met(self):
         with patch.object(app, "call_llm", return_value=output([song("主题", True)] + [song(f"日常{i}") for i in range(4)])):
@@ -190,3 +190,62 @@ class HolidaySelectionTests(unittest.TestCase):
                 self.assertIn(f'《{saved["song"]}》', sent)
                 self.assertEqual(set(saved), {"song", "artist"})
             self.assertNotIn("日常4", sent)
+
+
+class DetailedLeadTests(unittest.TestCase):
+    def test_detailed_fields_are_only_shown_for_main_song(self):
+        songs = [song(str(i)) for i in range(5)]
+        lead = {"song": "0", "artist": "歌手", "reason": "女声清唱适配理由",
+                "singing_segment": "从熟悉的副歌进入，唱到情绪收束处。",
+                "opening": "直接开唱，镜头保持稳定。",
+                "practice_tips": "先练换气，再试录检查咬字。",
+                "title_options": ["换个角度的标题", "另一个标题"]}
+        with patch.object(app, "call_llm", return_value=output(songs, lead)) as llm:
+            data = app.gen_topics({}, context("2026-03-01"))
+        self.assertEqual(llm.call_count, 1)
+        for rendered in (app.build_summary(data, ""), app.render_html(data)):
+            self.assertEqual(rendered.count("演唱段落"), 1)
+            self.assertIn("今日主推", rendered)
+            for i in range(1, 5):
+                self.assertIn(f"副推 {i}", rendered)
+            self.assertIn(lead["singing_segment"], rendered)
+            self.assertIn("换个角度的标题", rendered)
+            self.assertNotIn("练习准备", rendered.split("副推 1", 1)[1])
+        summary = app.build_summary(data, "")
+        for i in range(1, 5):
+            self.assertIn(f'副推 {i}：歌手《{i}》- "在楼道里唱{i}"', summary)
+
+    def test_missing_or_invalid_detail_fields_have_safe_defaults(self):
+        for source in [None, {"singing_segment": [], "opening": " ", "practice_tips": None,
+                              "title_options": "不是数组"}]:
+            details = app._make_lead_details(song("测试"), source)
+            for key in ("singing_segment", "opening", "practice_tips"):
+                self.assertTrue(details[key])
+            self.assertEqual(details["title_options"], [])
+        details = app._make_lead_details(song("测试"), {"title_options": [None, " ", "在楼道里唱测试", "新标题", "新标题", "标题二", "标题三"]})
+        self.assertEqual(details["title_options"], ["新标题", "标题二"])
+
+    def test_replacement_discards_old_or_mismatched_detailed_advice(self):
+        first_lead = {"song": "日常0", "artist": "歌手", "reason": "旧理由", "opening": "旧开场"}
+        wrong_lead = {"song": "日常0", "artist": "歌手", "reason": "旧理由", "opening": "不匹配开场"}
+        with patch.object(app, "call_llm", side_effect=[
+            output([song(f"日常{i}") for i in range(5)], first_lead),
+            output([song("主题一", True), song("主题二", True)], wrong_lead),
+        ]) as llm:
+            data = app.gen_topics({}, context())
+        self.assertEqual(llm.call_count, 2)
+        self.assertEqual(data["lead"]["song"], "主题一")
+        rendered = app.build_summary(data, "")
+        self.assertNotIn("旧开场", rendered)
+        self.assertNotIn("不匹配开场", rendered)
+
+    def test_new_detail_fields_are_html_escaped(self):
+        lead = {"song": "0", "artist": "歌手", "reason": "理由",
+                "singing_segment": "<script>坏内容</script>",
+                "title_options": ["<b>标题</b>"]}
+        with patch.object(app, "call_llm", return_value=output([song(str(i)) for i in range(5)], lead)):
+            data = app.gen_topics({}, context("2026-03-01"))
+        rendered = app.render_html(data)
+        self.assertNotIn("<script>", rendered)
+        self.assertIn("&lt;script&gt;", rendered)
+        self.assertIn("&lt;b&gt;标题&lt;/b&gt;", rendered)
