@@ -40,7 +40,7 @@ class ModelVerseTests(unittest.TestCase):
         self.assertEqual(args["json"]["messages"][0]["role"], "system")
         self.assertEqual(args["json"]["messages"][1], {"role": "user", "content": "只回复 OK"})
         self.assertEqual(args["json"]["stream"], False)
-        self.assertEqual(args["json"]["max_tokens"], 4096)
+        self.assertEqual(args["json"]["max_tokens"], 16384)
         self.assertNotIn("tools", args["json"])
         self.assertEqual(args["timeout"], 120)
 

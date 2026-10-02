@@ -146,7 +146,7 @@ def call_llm(prompt: str) -> str:
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "max_tokens": 4096,
+            "max_tokens": 16384,
         },
         timeout=120,
     )
