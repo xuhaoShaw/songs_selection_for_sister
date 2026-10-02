@@ -75,6 +75,11 @@ class ModelVerseTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
+    def setUp(self):
+        p = patch.object(app, "today_date", return_value=TODAY)
+        p.start()
+        self.addCleanup(p.stop)
+
     def test_window_includes_six_days_ago_and_same_day(self):
         history = {"entries": [
             {"date": "2026-09-23", "songs": [song("七天前") ]},

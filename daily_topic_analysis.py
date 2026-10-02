@@ -5,7 +5,7 @@
   阶段一：调用 LLM 生成 5 首选题 -> 渲染 HTML 报告落盘
   阶段二：读取报告 -> 生成摘要 -> 推送飞书群（webhook 或 企业应用 API）
 
-依赖 requests，不依赖 lark-cli，可部署到 cron / GitHub Actions / 云函数。
+依赖 requests + lunar-python，不依赖 lark-cli，可部署到 cron / GitHub Actions / 云函数。
 
 环境变量：
   MODELVERSE_API_KEY    必填，ModelVerse API Key
@@ -19,6 +19,7 @@
   FEISHU_CHAT_ID        可选，目标群 ID，默认 oc_7218400c9a4ca099f4cecb2e3d32111e
 """
 import datetime
+from html import escape
 import json
 import os
 import re
@@ -26,6 +27,8 @@ import sys
 import tempfile
 import unicodedata
 from zoneinfo import ZoneInfo
+
+from holiday_calendar import get_holiday_context
 
 try:
     import requests
@@ -175,21 +178,43 @@ def parse_json(text: str):
     return json.loads(text)
 
 
-def gen_topics(excluded=None) -> dict:
+def gen_topics(excluded=None, holiday_context=None) -> dict:
+    context = holiday_context if holiday_context is not None else get_holiday_context(today_date())
+    quota = context["min_theme_songs"]
+    if type(quota) is not int or not 0 <= quota <= 5 or bool(context["theme"]) != bool(quota):
+        raise ValueError("节日主题配置无效")
     blocked = dict(excluded or {})
-    selected = []
+    candidates = []
     action = ""
+    lead = None
     template = (
         "请为本博主生成今日 {count} 首翻唱选题，返回 JSON，结构如下："
         '{"action":"一条行动建议",'
         '"songs":[{"song":"歌名","artist":"歌手","reason":"一句话推荐理由",'
-        '"title":"首推标题（有情绪钩子、反模板）","tags":["标签1","标签2","标签3"]}]}'
+        '"title":"首推标题（有情绪钩子、反模板）","tags":["标签1","标签2","标签3"],'
+        '"is_theme":false,"theme_reason":"与主主题的关联及清唱适配理由"}],'
+        '"lead":{"song":"首推歌名","artist":"首推歌手",'
+        '"reason":"明确当天关联、女声清唱适配性和首推理由"}}'
         "要求：标题每篇独一无二，禁止出现『翻唱《X》，有没有唱进你心里』式模板；"
         "标签建立场景词矩阵（#楼道清唱/#清唱/#翻唱）+ 情绪词 + 歌名/歌手词。"
     )
-    # 保留合格歌曲，只补选缺额；最多调用三次，绝不降级发送重复歌曲。
+    # 保留日常候选作为降级备选；满五首但主题不足时继续补选主题。
     for _ in range(3):
-        prompt = template.replace("{count}", str(5 - len(selected)))
+        themed_count = sum(song["is_theme"] for song in candidates)
+        missing_theme = max(0, quota - themed_count)
+        count = max(5 - len(candidates), missing_theme)
+        prompt = template.replace("{count}", str(count))
+        prompt += (
+            "程序提供的节日日历（不得自行改变日期或主题）："
+            + json.dumps(context, ensure_ascii=False)
+            + f"。本次至少补选 {missing_theme} 首主主题歌曲。"
+            "只有歌曲本身表达主主题且适合女声清唱，才标记 is_theme=true 并给出具体理由；"
+            "禁止仅凭标题或标签带节日词就判定为主题。普通日期 is_theme=false。"
+            "候选满足时优先从主题歌中首推。结合已保留候选和新增歌曲重新生成 lead，"
+            "说明须对应最终推荐歌曲，不复用被替换歌曲的说明。"
+            "禁止声称必涨粉、独立验证了主题或检索过实时热度。已保留候选："
+            + json.dumps(candidates, ensure_ascii=False)
+        )
         prompt += (
             "以下歌曲在最近一周已推送或本轮已选中，禁止推荐，包括不同歌手的翻唱、Live 和清唱版本："
             + json.dumps(list(blocked.values()), ensure_ascii=False)
@@ -215,11 +240,62 @@ def gen_topics(excluded=None) -> dict:
             key = song_key(song["song"])
             if not key or key in blocked:
                 continue
-            selected.append(song)
+            song = dict(song)
+            theme_reason = song.get("theme_reason", "")
+            song["is_theme"] = bool(
+                context["theme"] and song.get("is_theme") is True
+                and isinstance(theme_reason, str) and theme_reason.strip()
+            )
+            song["theme_reason"] = theme_reason.strip() if song["is_theme"] else ""
+            candidates.append(song)
             blocked[key] = song["song"]
-            if len(selected) == 5:
-                return {"action": action, "songs": selected}
-    raise RuntimeError(f"三次选曲后仅获得 {len(selected)} 首合格歌曲，未能满足一周内不重复的要求")
+        # 只采用最新一次有效响应的说明，补选后不会沿用旧候选的说明。
+        lead = data.get("lead")
+        if len(candidates) >= 5 and sum(s["is_theme"] for s in candidates) >= quota:
+            break
+    if len(candidates) < 5:
+        raise RuntimeError(f"三次选曲后仅获得 {len(candidates)} 首合格歌曲，未能满足一周内不重复的要求")
+    themed = [s for s in candidates if s["is_theme"]]
+    eligible = themed or candidates
+    first = eligible[0]
+    lead_reason = ""
+    if isinstance(lead, dict) and isinstance(lead.get("reason"), str) and lead["reason"].strip():
+        for song in eligible:
+            if song_key(str(lead.get("song", ""))) == song_key(song["song"]) and lead.get("artist") == song["artist"]:
+                first = song
+                lead_reason = lead["reason"].strip()
+                break
+    ordered = [first]
+    for song in themed:
+        if len(ordered) >= max(1, quota):
+            break
+        if song is not first:
+            ordered.append(song)
+    for song in candidates:
+        if len(ordered) == 5:
+            break
+        if song not in ordered:
+            ordered.append(song)
+    actual = sum(s["is_theme"] for s in ordered)
+    warning = f"主题配额不足：目标至少 {quota} 首，实际 {actual} 首；已用其他合格歌曲补齐五首。" if actual < quota else ""
+    if not lead_reason:
+        association = first["theme_reason"] or (
+            "本日主题候选不足，选择日常备选" if context["theme"] else "今日为日常选题"
+        )
+        lead_reason = f"首推《{first['song']}》：{association}；女声清唱选题建议：{first['reason']}"
+    return {
+        "action": action, "songs": ordered, "holiday_context": context,
+        "theme_count": actual, "quota_warning": warning,
+        "lead": {"song": first["song"], "artist": first["artist"], "reason": lead_reason},
+    }
+
+
+def _theme_label(data: dict) -> str:
+    context = data.get("holiday_context", {})
+    label = f"{context['theme']}（{context['phase']}）" if context.get("theme") else "日常选题"
+    if context.get("secondary_themes"):
+        label += f"；同时关注：{'、'.join(context['secondary_themes'])}"
+    return label
 
 
 def render_html(data: dict) -> str:
@@ -230,16 +306,21 @@ def render_html(data: dict) -> str:
     cards = []
     for i, s in enumerate(data["songs"], 1):
         tags_html = "".join(
-            f'<span class="t">{t}</span>' for t in s.get("tags", [])
+            f'<span class="t">{escape(t)}</span>' for t in s.get("tags", [])
         )
+        theme_reason = f'<div class="reason">主题关联（模型判断）：{escape(s["theme_reason"])}</div>' if s.get("is_theme") else ""
+        lead_html = f'<div class="action">首推说明：{escape(data.get("lead", {}).get("reason", s["reason"]))}</div>' if i == 1 else ""
         cards.append(
-            f"""<div class="card"><div class="rank">推荐 {i}</div>
-<div class="head">{s['song']}<span class="art"> {s['artist']}</span></div>
-<div class="reason">{s['reason']}</div>
-<div class="lbl">首推标题</div><div class="ttl">“{s['title']}”</div>
+            f"""<div class="card"><div class="rank">{'今日首推' if i == 1 else f'备选 {i - 1}'}</div>
+<div class="head">{escape(s['song'])}<span class="art"> {escape(s['artist'])}</span></div>
+<div class="reason">{escape(s['reason'])}</div>{theme_reason}{lead_html}
+<div class="lbl">建议标题</div><div class="ttl">“{escape(s['title'])}”</div>
 <div class="lbl">标签</div><div class="tags">{tags_html}</div></div>"""
         )
 
+    warning = f'<div class="action">{escape(data["quota_warning"])}</div>' if data.get("quota_warning") else ""
+    preview = data.get("holiday_context", {}).get("tomorrow_preview", "")
+    preview_html = f'<div class="action">{escape(preview)}</div>' if preview else ""
     return f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
 <title>{title}</title><style>
 body{{font-family:-apple-system,'Microsoft YaHei',sans-serif;background:#fdf8f4;color:#2d2d2d;margin:0;padding:24px;line-height:1.6}}
@@ -255,8 +336,10 @@ body{{font-family:-apple-system,'Microsoft YaHei',sans-serif;background:#fdf8f4;
 .foot{{color:#8c7b6e;font-size:12px;text-align:center;margin-top:24px}}</style></head>
 <body><div class="wrap"><h1>{title}</h1>
 <p class="sub">诗濛（有关必回）· 楼道清唱翻唱 · {date_cn}</p>
+<h2>今日主题：{escape(_theme_label(data))}</h2>{warning}
 {''.join(cards)}
-<div class="action"><b>今日行动建议：</b>{data.get('action', '')}</div>
+<div class="action"><b>今日行动建议：</b>{escape(data.get('action', ''))}</div>
+{preview_html}
 <div class="foot">AI 选题助手自动生成 · 仅供内部参考</div></div></body></html>"""
 
 
@@ -264,9 +347,19 @@ body{{font-family:-apple-system,'Microsoft YaHei',sans-serif;background:#fdf8f4;
 def build_summary(data: dict, link: str) -> str:
     today = today_date()
     date_cn = f"{today.month}月{today.day}日"
-    lines = [f"【{date_cn} 选题分析】", "推荐歌曲："]
+    lines = [f"【{date_cn} 选题分析】", f"今日主题：{_theme_label(data)}"]
+    if data.get("quota_warning"):
+        lines.append(data["quota_warning"])
     for i, s in enumerate(data["songs"], 1):
-        lines.append(f'{i}. {s["artist"]}《{s["song"]}》- "{s["title"]}"')
+        rank = "今日首推" if i == 1 else f"备选 {i - 1}"
+        lines.append(f'{rank}：{s["artist"]}《{s["song"]}》- "{s["title"]}"')
+        if i == 1:
+            lines.append(f'首推说明：{data.get("lead", {}).get("reason", s["reason"])}')
+        if s.get("is_theme"):
+            lines.append(f'主题关联（模型判断）：{s["theme_reason"]}')
+    preview = data.get("holiday_context", {}).get("tomorrow_preview", "")
+    if preview:
+        lines.append(preview)
     lines.append(f'行动：{data.get("action", "")}')
     if link:
         lines.append(f"详细报告：{link}")
@@ -323,8 +416,12 @@ def main(event=None, context=None) -> dict:
 
     try:
         today = today_date()
+        holiday_context = get_holiday_context(today)
         history = load_history()
-        data = gen_topics(recent_songs(history, today))
+        data = gen_topics(recent_songs(history, today), holiday_context)
+        result["theme"] = _theme_label(data)
+        result["theme_count"] = data["theme_count"]
+        result["quota_warning"] = data["quota_warning"]
         html = render_html(data)
         fname = today.strftime("%Y%m%d_选题分析.html")
         fpath = os.path.join(REPORT_DIR, fname)
