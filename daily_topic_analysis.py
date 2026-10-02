@@ -394,29 +394,51 @@ body{{font-family:-apple-system,'Microsoft YaHei',sans-serif;background:#fdf8f4;
 
 
 # ----------------------------- 阶段二 -----------------------------
+def _markdown_text(value: str) -> str:
+    """模型内容作为普通文字展示，格式标记只由程序提供。"""
+    value = escape(value, quote=False)
+    for char in ("\\", "*", "_", "`", "[", "]", "~"):
+        value = value.replace(char, "\\" + char)
+    return value
+
+
 def build_summary(data: dict, link: str) -> str:
     today = today_date()
     date_cn = f"{today.month}月{today.day}日"
-    lines = [f"【{date_cn} 选题分析】", f"今日主题：{_theme_label(data)}"]
+    text = _markdown_text
+    sections = [f"**【{date_cn} 选题分析】**", f"**今日主题：**{text(_theme_label(data))}"]
     if data.get("quota_warning"):
-        lines.append(data["quota_warning"])
+        sections.append(f'**主题配额提醒：**{text(data["quota_warning"])}')
     for i, s in enumerate(data["songs"], 1):
         rank = "今日主推" if i == 1 else f"副推 {i - 1}"
-        lines.append(f'{rank}：{s["artist"]}《{s["song"]}》- "{s["title"]}"')
+        heading = f'{rank}：{s["artist"]}《{s["song"]}》'
         if i == 1:
-            lines.append(f'首推说明：{data.get("lead", {}).get("reason", s["reason"])}')
-            lines.extend(f"{label}：{value}" for label, value in _lead_detail_items(data))
+            parts = [f"**{text(heading)}**",
+                     f'**建议标题：**{text(s["title"])}',
+                     f'**首推说明：**{text(data.get("lead", {}).get("reason", s["reason"]))}']
+            parts.extend(f"**{label}：**{text(value)}" for label, value in _lead_detail_items(data))
             if s.get("tags"):
-                lines.append(f'主推标签：{" ".join(s["tags"])}')
+                parts.append(f'**主推标签：**{text(" ".join(s["tags"]))}')
+        else:
+            parts = [f'**{text(heading)}** - "{text(s["title"])}"']
         if s.get("is_theme"):
-            lines.append(f'主题关联（模型判断）：{s["theme_reason"]}')
+            parts.append(f'**主题关联（模型判断）：**{text(s["theme_reason"])}')
+        # 主推各建议独立成段；四首副推各自成段，保留原有字段。
+        sections.append(("\n\n" if i == 1 else "\n").join(parts))
     preview = data.get("holiday_context", {}).get("tomorrow_preview", "")
     if preview:
-        lines.append(preview)
-    lines.append(f'行动：{data.get("action", "")}')
+        sections.append(f"**明日准备：**{text(preview)}")
+    sections.append(f'**行动：**{text(data.get("action", ""))}')
     if link:
-        lines.append(f"详细报告：{link}")
-    return "\n".join(lines)
+        sections.append(f"**详细报告：**{text(link)}")
+    return "\n\n".join(sections)
+
+
+def build_feishu_card(text: str) -> dict:
+    return {
+        "config": {"wide_screen_mode": True},
+        "elements": [{"tag": "markdown", "content": text}],
+    }
 
 
 def _tenant_token() -> str:
@@ -435,10 +457,11 @@ def _tenant_token() -> str:
 
 
 def send_feishu(text: str) -> None:
+    card = build_feishu_card(text)
     if FEISHU_WEBHOOK:
         resp = requests.post(
             FEISHU_WEBHOOK,
-            json={"msg_type": "text", "content": {"text": text}},
+            json={"msg_type": "interactive", "card": card},
             timeout=30,
         )
         resp.raise_for_status()
@@ -452,8 +475,8 @@ def send_feishu(text: str) -> None:
         headers={"Authorization": f"Bearer {token}"},
         json={
             "receive_id": FEISHU_CHAT_ID,
-            "msg_type": "text",
-            "content": json.dumps({"text": text}),
+            "msg_type": "interactive",
+            "content": json.dumps(card, ensure_ascii=False),
         },
         timeout=30,
     )

@@ -213,7 +213,7 @@ class DetailedLeadTests(unittest.TestCase):
             self.assertNotIn("练习准备", rendered.split("副推 1", 1)[1])
         summary = app.build_summary(data, "")
         for i in range(1, 5):
-            self.assertIn(f'副推 {i}：歌手《{i}》- "在楼道里唱{i}"', summary)
+            self.assertIn(f'**副推 {i}：歌手《{i}》** - "在楼道里唱{i}"', summary)
 
     def test_missing_or_invalid_detail_fields_have_safe_defaults(self):
         for source in [None, {"singing_segment": [], "opening": " ", "practice_tips": None,

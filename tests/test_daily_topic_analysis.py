@@ -123,7 +123,53 @@ class SelectionTests(unittest.TestCase):
         songs = [dict(song(f"歌{i}"), title="长标题" * 50) for i in range(5)]
         summary = app.build_summary({"songs": songs, "action": "行动结尾"}, "")
         self.assertIn("歌4", summary)
-        self.assertTrue(summary.endswith("行动：行动结尾"))
+        self.assertTrue(summary.endswith("**行动：**行动结尾"))
+
+
+class FeishuFormattingTests(unittest.TestCase):
+    def test_markdown_sections_and_blank_lines(self):
+        data = {"songs": [song(f"歌{i}") for i in range(5)], "action": "录一首"}
+        summary = app.build_summary(data, "")
+        self.assertIn("**今日主题：**日常选题", summary)
+        self.assertIn("**今日主推：歌手《歌0》**\n\n**建议标题：**听歌0", summary)
+        self.assertIn("\n\n**首推说明：**", summary)
+        for i in range(1, 5):
+            self.assertIn(f'\n\n**副推 {i}：歌手《歌{i}》** - "听歌{i}"', summary)
+        self.assertEqual(summary.count("**演唱段落：**"), 1)
+        self.assertTrue(summary.endswith("\n\n**行动：**录一首"))
+
+    def test_model_text_cannot_introduce_bold_or_mentions(self):
+        data = {"songs": [song("测试")], "action": "**伪标题** <at id=all>所有人</at>"}
+        summary = app.build_summary(data, "")
+        self.assertNotIn("**伪标题**", summary)
+        self.assertNotIn("<at", summary)
+        self.assertIn("&lt;at", summary)
+
+    def test_both_transports_send_same_markdown_card(self):
+        text = "**主推**\n\n歌曲\n\n**副推 1**"
+        resp = Mock()
+        resp.json.return_value = {"code": 0}
+        with patch.object(app.requests, "post", return_value=resp) as post, \
+                patch.object(app, "FEISHU_WEBHOOK", "https://example.test/hook"):
+            app.send_feishu(text)
+        webhook = post.call_args.kwargs["json"]
+        self.assertEqual(webhook["msg_type"], "interactive")
+        self.assertEqual(webhook["card"]["elements"], [{"tag": "markdown", "content": text}])
+        with patch.object(app.requests, "post", return_value=resp) as post, \
+                patch.object(app, "FEISHU_WEBHOOK", ""), \
+                patch.object(app, "_tenant_token", return_value="test-token"):
+            app.send_feishu(text)
+        api = post.call_args.kwargs["json"]
+        self.assertEqual(api["msg_type"], "interactive")
+        self.assertEqual(json.loads(api["content"]), webhook["card"])
+
+    def test_card_rejection_is_not_treated_as_success(self):
+        resp = Mock()
+        resp.json.return_value = {"code": 11311}
+        with patch.object(app.requests, "post", return_value=resp), \
+                patch.object(app, "FEISHU_WEBHOOK", "https://example.test/hook"):
+            with self.assertRaisesRegex(RuntimeError, "webhook 失败"):
+                app.send_feishu("**主推**")
 
 
 class HistoryTests(unittest.TestCase):
