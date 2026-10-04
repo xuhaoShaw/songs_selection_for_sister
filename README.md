@@ -38,6 +38,16 @@ GitHub Actions 使用 `codex/song-history` 独立分支保存 `song-history.json
 
 Actions 配置仓库 Secrets：`MODELVERSE_API_KEY`、`FEISHU_WEBHOOK`。默认定时为北京时间每天 05:47，也支持手动触发。
 
+每天为最终主推额外调用一次 ModelVerse `/v1/images/generations`（`gpt-image-2`），生成 1024×1024 PNG 主题封面。封面根据歌曲情绪与实际节日关联选择场景，不固定楼道背景，也不写“楼道清唱”。选题请求同时生成最多 16 字的封面情绪短句，不增加文字模型调用；短句缺失或不合格时以歌名为标题。AI 直接绘制文字，发布前仍需人工检查错字及画面。封面不保证涨粉，也不自动发布小红书。
+
+飞书卡片将图片放在主推详情之后、四首副推之前。PNG 原图随 Actions 的 `topic-report` 附件保存，HTML 内嵌图片，下载 HTML 后也能离线查看。每次运行单独保存 PNG，重复手动运行不会覆盖同日旧封面。
+
+显示图片还需要在 GitHub Secrets 添加 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`。在 [飞书开放平台](https://open.feishu.cn/app) 创建企业自建应用，开启机器人能力，在权限管理中开通 `im:resource`（上传图片），发布并启用应用版本，再从“凭证与基础信息”复制 App ID 和 App Secret。程序先通过 [上传图片接口](https://open.feishu.cn/document/server-docs/im-v1/image/create) 获得 `image_key`，仍通过现有 Webhook 发卡片；Webhook 本身不能上传图片。此配置不替换群 Webhook，不需要改动推送时间或历史分支。需在配置后实际验证所在租户的图片卡片发送。
+
+图片生成失败、未配置应用凭据或图片上传失败时，照常发送五首歌曲，在卡片里说明原因。生成成功但不能发送时仍在报告和附件中保留图片。若飞书接口明确拒绝图片卡片，仅降级发送一次文字卡片；请求超时等不确定错误不重发，避免重复消息。历史依然只在消息发送成功后记录歌曲。图片失败只产生提醒，不把原本成功的歌曲推送标为失败。
+
+本地可用 `COVER_ENABLED=false` 关闭封面，`COVER_MODEL` 默认 `gpt-image-2`；Actions 明确启用封面。图片生成使用现有 `MODELVERSE_API_KEY`，每次选题最多额外生成一张，独立于文字模型的三次补选预算。
+
 选题接口使用 ModelVerse 的 `https://api.modelverse.cn/v1/chat/completions`，模型为 `deepseek-v4.1-flash`，通过 Bearer 密钥鉴权，非流式返回。`LLM_BASE_URL` 默认 `https://api.modelverse.cn/v1`，`LLM_MODEL` 可覆盖默认模型。旧的 `DEEPSEEK_API_KEY` 不再使用。
 
 本次接入按已验证的 Chat Completions 请求格式实现，不传原先 Responses 接口的 `web_search` 工具；选曲基于模型已知歌曲，不宣称查过实时热榜。一周去重和自动补选规则照常执行。
@@ -50,3 +60,4 @@ Actions 配置仓库 Secrets：`MODELVERSE_API_KEY`、`FEISHU_WEBHOOK`。默认�
 
 `python -m unittest discover -s tests -v` 验证去重、七天边界、补选和推送后的历史更新；不会调用模型或发送飞书消息。
 `node --test tests/test-song-history.cjs` 验证 Actions 历史同步。
+封面测试使用模拟接口与内存测试图片，覆盖 Base64/URL 响应、无效图片、上传、卡片位置、失败降级及历史，不消耗图片额度、不发送真实飞书消息。

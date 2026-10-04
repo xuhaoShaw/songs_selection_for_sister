@@ -29,6 +29,7 @@ import unicodedata
 from zoneinfo import ZoneInfo
 
 from holiday_calendar import get_holiday_context
+from cover_image import generate_cover
 
 try:
     import requests
@@ -42,6 +43,8 @@ HISTORY_FILE = os.environ.get("HISTORY_FILE", "song-history.json")
 LLM_API_KEY = os.environ.get("MODELVERSE_API_KEY", "")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.modelverse.cn/v1")
 LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash")
+COVER_ENABLED = os.environ.get("COVER_ENABLED", "true").lower() not in ("false", "0", "no")
+COVER_MODEL = os.environ.get("COVER_MODEL", "gpt-image-2")
 FEISHU_WEBHOOK = os.environ.get("FEISHU_WEBHOOK", "")
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
@@ -198,11 +201,13 @@ def gen_topics(excluded=None, holiday_context=None) -> dict:
         '"singing_segment":"建议演唱哪个段落、如何起止以及情绪处理",'
         '"opening":"可执行的视频开场方式",'
         '"practice_tips":"练习难点和两到三个具体准备步骤",'
+        '"cover_headline":"16字以内的封面情绪短句，不写楼道清唱、不编造个人经历",'
         '"title_options":["另一种标题角度1","另一种标题角度2"]}}'
         "要求：标题每篇独一无二，禁止出现『翻唱《X》，有没有唱进你心里』式模板；"
         "标签建立场景词矩阵（#楼道清唱/#清唱/#翻唱）+ 情绪词 + 歌名/歌手词。"
         "只为一首主推补充详细拍摄建议，四首副推保持原有歌曲字段。"
         "主推说明需具体但简洁，各详细字段控制在一到两句话；"
+        "封面文案突出歌曲情绪或听歌场景，不宣称实时热度或保证涨粉；"
         "未核实具体音源时不要编造时间戳、歌词、调性或音域；"
         "不要编造博主的个人经历，开场建议以真实表达或直接开唱为主。"
     )
@@ -312,6 +317,11 @@ def _make_lead_details(song: dict, source=None) -> dict:
     for key, fallback in defaults.items():
         value = source.get(key)
         result[key] = value.strip() if isinstance(value, str) and value.strip() else fallback
+    headline = source.get("cover_headline")
+    result["cover_headline"] = (
+        headline.strip() if isinstance(headline, str) and 0 < len(headline.strip()) <= 16
+        and "\n" not in headline and "楼道" not in headline else ""
+    )
     titles = source.get("title_options")
     result["title_options"] = []
     if isinstance(titles, list):
@@ -330,6 +340,8 @@ def _lead_detail_items(data: dict) -> list:
     items = [("演唱段落", details["singing_segment"]),
              ("视频开场", details["opening"]),
              ("练习准备", details["practice_tips"])]
+    if details["cover_headline"]:
+        items.append(("封面文案", details["cover_headline"]))
     for i, title in enumerate(details["title_options"], 1):
         items.append((f"其他标题 {i}", title))
     return items
@@ -360,6 +372,14 @@ def render_html(data: dict) -> str:
                 f'<div class="lbl">{label}</div><div class="reason">{escape(value)}</div>'
                 for label, value in _lead_detail_items(data)
             )
+            cover = data.get("cover", {})
+            if cover.get("b64"):
+                lead_html += (f'<div class="lbl">主推主题封面（AI 生成，发布前请检查文字）</div>'
+                              f'<img style="width:100%;border-radius:10px" '
+                              f'src="data:image/png;base64,{escape(cover["b64"], quote=True)}" '
+                              f'alt="{escape(s["song"], quote=True)}主题封面">')
+            if data.get("cover_warning"):
+                lead_html += f'<div class="reason">{escape(data["cover_warning"])}</div>'
         cards.append(
             f"""<div class="card"><div class="rank">{'今日主推' if i == 1 else f'副推 {i - 1}'}</div>
 <div class="head">{escape(s['song'])}<span class="art"> {escape(s['artist'])}</span></div>
@@ -409,6 +429,8 @@ def build_summary(data: dict, link: str) -> str:
     sections = [f"**【{date_cn} 选题分析】**", f"**今日主题：**{text(_theme_label(data))}"]
     if data.get("quota_warning"):
         sections.append(f'**主题配额提醒：**{text(data["quota_warning"])}')
+    if data.get("cover_warning"):
+        sections.append(f'**封面提醒：**{text(data["cover_warning"])}')
     for i, s in enumerate(data["songs"], 1):
         rank = "今日主推" if i == 1 else f"副推 {i - 1}"
         heading = f'{rank}：{s["artist"]}《{s["song"]}》'
@@ -434,10 +456,19 @@ def build_summary(data: dict, link: str) -> str:
     return "\n\n".join(sections)
 
 
-def build_feishu_card(text: str) -> dict:
+def build_feishu_card(text: str, image_key: str = "") -> dict:
+    elements = [{"tag": "markdown", "content": text}]
+    if image_key:
+        # 插在主推详情后、副推之前；标记由 build_summary 生成。
+        main, separator, secondary = text.partition("\n\n**副推 1：")
+        elements = [{"tag": "markdown", "content": main},
+                    {"tag": "img", "img_key": image_key,
+                     "alt": {"tag": "plain_text", "content": "主推主题封面（AI 生成，发布前请检查文字）"}}]
+        if separator:
+            elements.append({"tag": "markdown", "content": "**副推 1：" + secondary})
     return {
         "config": {"wide_screen_mode": True},
-        "elements": [{"tag": "markdown", "content": text}],
+        "elements": elements,
     }
 
 
@@ -456,8 +487,48 @@ def _tenant_token() -> str:
     return token
 
 
-def send_feishu(text: str) -> None:
-    card = build_feishu_card(text)
+class FeishuMessageRejected(RuntimeError):
+    """接口明确拒绝消息时才可安全重试，超时不重发以免重复。"""
+
+
+def upload_feishu_image(path: str) -> str:
+    token = _tenant_token()
+    with open(path, "rb") as image:
+        resp = requests.post(
+            "https://open.feishu.cn/open-apis/im/v1/images",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"image_type": "message"},
+            files={"image": (os.path.basename(path), image, "image/png")},
+            timeout=60,
+        )
+    resp.raise_for_status()
+    body = resp.json()
+    if body.get("code") != 0 or not body.get("data", {}).get("image_key"):
+        raise RuntimeError("飞书图片上传失败，请检查机器人能力及 im:resource 权限")
+    return body["data"]["image_key"]
+
+
+def prepare_cover(data: dict, today) -> None:
+    if not COVER_ENABLED:
+        return
+    try:
+        data["cover"] = generate_cover(data, REPORT_DIR, today, LLM_API_KEY,
+                                       LLM_BASE_URL, COVER_MODEL)
+    except Exception as error:
+        # 不把第三方响应、签名下载地址或密钥写到日志及群消息。
+        data["cover_warning"] = f"主题封面生成失败（{type(error).__name__}），本次保留歌曲推荐。"
+        return
+    if not (FEISHU_APP_ID and FEISHU_APP_SECRET):
+        data["cover_warning"] = "主题封面已生成，但缺少飞书图片上传配置；可从 HTML 报告或云端运行附件获取。"
+        return
+    try:
+        data["cover"]["image_key"] = upload_feishu_image(data["cover"]["path"])
+    except Exception as error:
+        data["cover_warning"] = f"主题封面已生成，但飞书图片上传失败（{type(error).__name__}）；可从 HTML 报告或云端运行附件获取。"
+
+
+def send_feishu(text: str, image_key: str = "") -> None:
+    card = build_feishu_card(text, image_key)
     if FEISHU_WEBHOOK:
         resp = requests.post(
             FEISHU_WEBHOOK,
@@ -466,7 +537,7 @@ def send_feishu(text: str) -> None:
         )
         resp.raise_for_status()
         if resp.json().get("code", 0) != 0:
-            raise RuntimeError(f"webhook 失败: {resp.text}")
+            raise FeishuMessageRejected(f"webhook 失败: {resp.text}")
         return
 
     token = _tenant_token()
@@ -482,7 +553,7 @@ def send_feishu(text: str) -> None:
     )
     resp.raise_for_status()
     if resp.json().get("code", 0) != 0:
-        raise RuntimeError(f"发消息失败: {resp.text}")
+        raise FeishuMessageRejected(f"发消息失败: {resp.text}")
 
 
 def main(event=None, context=None) -> dict:
@@ -498,6 +569,9 @@ def main(event=None, context=None) -> dict:
         result["theme"] = _theme_label(data)
         result["theme_count"] = data["theme_count"]
         result["quota_warning"] = data["quota_warning"]
+        prepare_cover(data, today)
+        result["cover"] = data.get("cover", {}).get("path")
+        result["cover_warning"] = data.get("cover_warning", "")
         html = render_html(data)
         fname = today.strftime("%Y%m%d_选题分析.html")
         fpath = os.path.join(REPORT_DIR, fname)
@@ -512,7 +586,20 @@ def main(event=None, context=None) -> dict:
 
     try:
         summary = build_summary(data, "")
-        send_feishu(summary)
+        image_key = data.get("cover", {}).get("image_key", "")
+        if image_key:
+            try:
+                send_feishu(summary, image_key)
+            except FeishuMessageRejected:
+                # 图片卡片被明确拒绝才降级重发；网络错误不重试。
+                data["cover_warning"] = "飞书未接受图片卡片，本次发送文字推荐；封面可从 HTML 报告或云端运行附件获取。"
+                result["cover_warning"] = data["cover_warning"]
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(render_html(data))
+                summary = build_summary(data, "")
+                send_feishu(summary)
+        else:
+            send_feishu(summary)
         result["push"] = "ok"
     except Exception as e:  # noqa: BLE001
         result["ok"] = False

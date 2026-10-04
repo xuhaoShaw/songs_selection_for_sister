@@ -44,6 +44,10 @@ jobs:
         env:
           MODELVERSE_API_KEY: ${{ secrets.MODELVERSE_API_KEY }}
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          COVER_ENABLED: "true"
+          COVER_MODEL: gpt-image-2
           LLM_BASE_URL: https://api.modelverse.cn/v1
           LLM_MODEL: deepseek-v4.1-flash
           HISTORY_FILE: song-history.json
@@ -66,6 +70,7 @@ jobs:
           name: topic-report
           path: |
             daily-analysis/*.html
+            daily-analysis/*.png
             daily-analysis/push-failed.txt
             song-history.json
           if-no-files-found: ignore
