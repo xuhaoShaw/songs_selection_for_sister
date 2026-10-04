@@ -26,7 +26,7 @@ def selected():
             "action": "试录主推", "theme_count": 1, "quota_warning": ""}
 
 
-def png(size=(1024, 1024)):
+def png(size=(1056, 1408)):
     buffer = BytesIO()
     Image.new("RGB", size, "orange").save(buffer, format="PNG")
     return buffer.getvalue()
@@ -49,6 +49,8 @@ class CoverGenerationTests(unittest.TestCase):
         self.assertNotIn('"歌名": "歌曲1"', prompt)
         self.assertIn("不使用楼道作为固定背景", prompt)
         self.assertIn("不保证涨粉", prompt)
+        self.assertIn("3:4竖版封面，1056×1408", prompt)
+        self.assertIn("视觉主体放在中下部", prompt)
         self.assertIn('"当天主题": "国庆"', prompt)
         data["songs"][0]["is_theme"] = False
         self.assertIn('"当天主题": null', cover.build_cover_prompt(data))
@@ -79,7 +81,7 @@ class CoverGenerationTests(unittest.TestCase):
         args = post.call_args.kwargs
         self.assertEqual(args["headers"]["Authorization"], "Bearer test-key")
         self.assertEqual(args["json"]["model"], "gpt-image-2")
-        self.assertEqual(args["json"]["size"], "1024x1024")
+        self.assertEqual(args["json"]["size"], "1056x1408")
         self.assertEqual(args["json"]["output_format"], "png")
         self.assertEqual(args["timeout"], 300)
 
@@ -100,6 +102,7 @@ class CoverGenerationTests(unittest.TestCase):
                         {"data": [{"url": "http://example.test/cover"}]},
                         {"data": [{"b64_json": "not-base64"}]},
                         {"data": [{"b64_json": base64.b64encode(b"not png").decode()}]},
+                        {"data": [{"b64_json": base64.b64encode(png((1024, 1024))).decode()}]},
                         {"data": [{"b64_json": base64.b64encode(png((20, 20))).decode()}]}]:
             with self.subTest(payload=str(payload)[:60]):
                 response = Mock()

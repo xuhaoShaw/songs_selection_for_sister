@@ -11,6 +11,8 @@ import requests
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+# 严格 3:4，宽高均为 ModelVerse 要求的 16 像素倍数。
+COVER_SIZE = (1056, 1408)
 
 
 def build_cover_prompt(data: dict) -> str:
@@ -26,14 +28,15 @@ def build_cover_prompt(data: dict) -> str:
         "封面短句": data.get("lead_details", {}).get("cover_headline", ""),
     }
     return (
-        "生成一张可直接用于小红书音乐翻唱图文笔记的方形封面，1024×1024。"
+        f"生成一张可直接用于小红书音乐翻唱图文笔记的3:4竖版封面，{COVER_SIZE[0]}×{COVER_SIZE[1]}。"
         "目标是让陌生观众一眼看懂歌曲并对情绪产生兴趣，不保证涨粉。"
         "根据下面的歌曲情绪资料自由选择适合的场景、配色和视觉主体，"
         "电影感、构图简洁，手机缩略图也清晰，避免杂乱。"
         "不限定拍摄地点，不使用楼道作为固定背景，不出现‘楼道清唱’字样。"
         "不要复制专辑封面或明星肖像，不添加平台Logo、水印、歌词、"
         "虚构个人经历、实时热度或涨粉承诺。"
-        "四周留至少8%安全边距，背景与文字对比清晰。"
+        "按竖版构图，情绪标题和歌名放在上半部，视觉主体放在中下部。"
+        "四周留至少8%安全边距，背景与文字对比清晰，文字不能贴边或被主体遮挡。"
         "如果资料中有封面短句，把短句作为最大标题，准确歌名放在其下作为副标题；"
         "如果短句为空，只将准确歌名作为最大标题。底部用小字号署名‘诗濛 · 女声翻唱’。"
         "文字只包含指定短句、准确歌名以及署名，"
@@ -51,7 +54,7 @@ def generate_cover(data: dict, report_dir: str, date, api_key: str,
         base_url.rstrip("/") + "/images/generations",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={"model": model, "prompt": build_cover_prompt(data),
-              "size": "1024x1024", "quality": "high", "output_format": "png",
+              "size": f"{COVER_SIZE[0]}x{COVER_SIZE[1]}", "quality": "high", "output_format": "png",
               "output_compression": 100},
         timeout=300,
     )
@@ -81,8 +84,8 @@ def generate_cover(data: dict, report_dir: str, date, api_key: str,
     if not raw or len(raw) > MAX_IMAGE_BYTES:
         raise ValueError("封面为空或超过大小限制")
     with Image.open(BytesIO(raw)) as image:
-        if image.format != "PNG" or image.size != (1024, 1024):
-            raise ValueError("封面不是预期的 1024×1024 PNG")
+        if image.format != "PNG" or image.size != COVER_SIZE:
+            raise ValueError(f"封面不是预期的 {COVER_SIZE[0]}×{COVER_SIZE[1]} PNG")
         image.verify()
     folder = Path(report_dir)
     folder.mkdir(parents=True, exist_ok=True)
