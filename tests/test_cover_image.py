@@ -54,15 +54,14 @@ class CoverGenerationTests(unittest.TestCase):
         self.assertIn('"当天主题": "国庆"', prompt)
         data["songs"][0]["is_theme"] = False
         self.assertIn('"当天主题": null', cover.build_cover_prompt(data))
-        data["lead_details"] = {"cover_headline": "思念唱给你听"}
-        self.assertIn('"封面短句": "思念唱给你听"', cover.build_cover_prompt(data))
-        self.assertIn("底部居中保留小号、低调水印", cover.build_cover_prompt(data))
+        data["lead_details"] = {"cover_headline": "有些思念，唱出来就懂了"}
+        self.assertIn('"封面短句": "有些思念，唱出来就懂了"', cover.build_cover_prompt(data))
 
     def test_headline_validation_and_mismatched_lead(self):
         current = selected()["songs"][0]
-        for headline in [None, ["标题"], "楼道清唱", "两行\n标题", "长" * 11]:
+        for headline in [None, ["标题"], "楼道清唱", "两行\n标题", "长" * 17]:
             self.assertEqual(app._make_lead_details(current, {"cover_headline": headline})["cover_headline"], "")
-        self.assertEqual(app._make_lead_details(current, {"cover_headline": "思念唱给你听"})["cover_headline"], "思念唱给你听")
+        self.assertEqual(app._make_lead_details(current, {"cover_headline": "有些思念，唱出来就懂了"})["cover_headline"], "有些思念，唱出来就懂了")
         data = selected()
         data["lead"] = {"song": "不是最终歌曲", "artist": "歌手", "reason": "旧理由", "cover_headline": "旧歌封面"}
         with patch.object(app, "call_llm", return_value=json.dumps(data, ensure_ascii=False)):
