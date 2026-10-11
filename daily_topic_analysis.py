@@ -201,7 +201,7 @@ def gen_topics(excluded=None, holiday_context=None) -> dict:
         '"singing_segment":"建议演唱哪个段落、如何起止以及情绪处理",'
         '"opening":"可执行的视频开场方式",'
         '"practice_tips":"练习难点和两到三个具体准备步骤",'
-        '"cover_headline":"16字以内的封面情绪短句，不写楼道清唱、不编造个人经历",'
+        '"cover_headline":"10字以内的封面情绪短句，不写楼道清唱、不编造个人经历",'
         '"title_options":["另一种标题角度1","另一种标题角度2"]}}'
         "要求：标题每篇独一无二，禁止出现『翻唱《X》，有没有唱进你心里』式模板；"
         "标签建立场景词矩阵（#楼道清唱/#清唱/#翻唱）+ 情绪词 + 歌名/歌手词。"
@@ -319,7 +319,7 @@ def _make_lead_details(song: dict, source=None) -> dict:
         result[key] = value.strip() if isinstance(value, str) and value.strip() else fallback
     headline = source.get("cover_headline")
     result["cover_headline"] = (
-        headline.strip() if isinstance(headline, str) and 0 < len(headline.strip()) <= 16
+        headline.strip() if isinstance(headline, str) and 0 < len(headline.strip()) <= 10
         and "\n" not in headline and "楼道" not in headline else ""
     )
     titles = source.get("title_options")
