@@ -1,0 +1,71 @@
+name: preview-xiaohongshu-cover
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate sample cover without sending Feishu messages
+        env:
+          MODELVERSE_API_KEY: ${{ secrets.MODELVERSE_API_KEY }}
+          LLM_BASE_URL: https://api.modelverse.cn/v1
+        run: |
+          python - <<'PY'
+          import datetime
+          import os
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          import daily_topic_analysis as app
+          from cover_image import generate_cover
+
+          song = {
+              "song": "如愿",
+              "artist": "王菲",
+              "reason": "温柔克制的思念与祝福，适合女声轻声表达。",
+              "title": "把想念轻轻唱给你",
+              "tags": ["#女声翻唱", "#清唱"],
+              "is_theme": False,
+              "theme_reason": "",
+          }
+          data = {
+              "songs": [song],
+              "lead": {"song": "如愿", "artist": "王菲", "reason": song["reason"]},
+              "lead_details": {"cover_headline": "想念有回声"},
+              "holiday_context": {},
+              "action": "测试封面排版。",
+          }
+          today = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date()
+          folder = Path("daily-analysis/cover-preview")
+          cover = generate_cover(
+              data, str(folder), today, os.environ["MODELVERSE_API_KEY"],
+              os.environ["LLM_BASE_URL"],
+          )
+          data["cover"] = cover
+          (folder / "preview.html").write_text(app.render_html(data), encoding="utf-8")
+          print(f"Generated preview for {cover['song']}: {cover['path']}")
+          PY
+
+      - name: Upload cover preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaohongshu-cover-preview
+          path: daily-analysis/cover-preview/*
+          if-no-files-found: error
+          retention-days: 7
