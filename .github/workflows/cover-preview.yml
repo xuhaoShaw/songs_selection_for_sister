@@ -1,7 +1,23 @@
 name: preview-xiaohongshu-cover
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      song:
+        description: "歌曲名"
+        required: true
+        default: "如愿"
+        type: string
+      artist:
+        description: "原唱"
+        required: true
+        default: "王菲"
+        type: string
+      headline:
+        description: "封面短句"
+        required: true
+        default: "想念有回声"
+        type: string
 
 permissions:
   contents: read
@@ -25,6 +41,9 @@ jobs:
         env:
           MODELVERSE_API_KEY: ${{ secrets.MODELVERSE_API_KEY }}
           LLM_BASE_URL: https://api.modelverse.cn/v1
+          COVER_SONG: ${{ inputs.song }}
+          COVER_ARTIST: ${{ inputs.artist }}
+          COVER_HEADLINE: ${{ inputs.headline }}
         run: |
           python - <<'PY'
           import datetime
@@ -36,18 +55,18 @@ jobs:
           from cover_image import generate_cover
 
           song = {
-              "song": "如愿",
-              "artist": "王菲",
-              "reason": "温柔克制的思念与祝福，适合女声轻声表达。",
-              "title": "把想念轻轻唱给你",
+              "song": os.environ["COVER_SONG"],
+              "artist": os.environ["COVER_ARTIST"],
+              "reason": "温暖的家国情感与灯火意象，适合女声用克制而有力量的方式演唱。",
+              "title": "把灯火唱给你听",
               "tags": ["#女声翻唱", "#清唱"],
               "is_theme": False,
               "theme_reason": "",
           }
           data = {
               "songs": [song],
-              "lead": {"song": "如愿", "artist": "王菲", "reason": song["reason"]},
-              "lead_details": {"cover_headline": "想念有回声"},
+              "lead": {"song": song["song"], "artist": song["artist"], "reason": song["reason"]},
+              "lead_details": {"cover_headline": os.environ["COVER_HEADLINE"]},
               "holiday_context": {},
               "action": "测试封面排版。",
           }
