@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: "47 21 * * *"          # UTC 21:47 = 北京时间次日 05:47
   workflow_dispatch: {}            # 允许在网页上手动触发
+  push: {}                         # 仅本验证分支使用，跑完即删
 
 permissions:
   contents: write                  # 将选曲历史持久化到独立分支
