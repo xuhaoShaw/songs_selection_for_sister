@@ -50,6 +50,8 @@ Actions 配置仓库 Secrets：`MODELVERSE_API_KEY`、`FEISHU_WEBHOOK`。默认�
 
 选题接口使用 ModelVerse 的 `https://api.modelverse.cn/v1/chat/completions`，模型为 `deepseek-v4.1-flash`，通过 Bearer 密钥鉴权，非流式返回。`LLM_BASE_URL` 默认 `https://api.modelverse.cn/v1`，`LLM_MODEL` 可覆盖默认模型。旧的 `DEEPSEEK_API_KEY` 不再使用。
 
+鉴权失败时先看 Actions 运行摘要里的 `::error::` 注解：401 既可能是密钥失效，也可能是模型名已更换——ModelVerse 对无权使用的模型同样返回 401，不会给 404。用 `python tools/diagnose_modelverse.py` 在同一把密钥下对比多个模型名的返回码即可区分；预检步骤 `python tools/check_modelverse_key.py` 会在选题前报错，并打印密钥哈希前缀，用来核对 Secret 与本地是否同一把。
+
 本次接入按已验证的 Chat Completions 请求格式实现，不传原先 Responses 接口的 `web_search` 工具；选曲基于模型已知歌曲，不宣称查过实时热榜。一周去重和自动补选规则照常执行。
 
 本地安装 `requirements.txt` 后运行 `python daily_topic_analysis.py`。通过环境变量配置密钥；`HISTORY_FILE` 默认 `song-history.json`，`REPORT_DIR` 默认 `daily-analysis`。本地/云函数运行时应将历史文件放在持久存储，并保证只有一个实例同时运行。

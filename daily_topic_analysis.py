@@ -58,6 +58,32 @@ BLOGGER_PROFILE = (
 
 BACKUP_SONGS = "阿楚姑娘、甲乙丙丁、乱徵、心似烟火、亲爱的你啊"
 
+# 鉴权/额度类错误一律翻译成可直接执行的排查提示，避免日志里只剩一个 401。
+API_ERROR_HINTS = {
+    401: "ModelVerse 鉴权失败：密钥无效、已吊销，或该密钥无权使用当前 LLM_MODEL"
+         "（部分网关对未授权模型也返回 401，而不是 404）。"
+         "先确认 LLM_MODEL 是否为控制台当前可用的名称，再考虑更换 MODELVERSE_API_KEY",
+    402: "ModelVerse 余额或额度不足：请到控制台充值或确认套餐额度",
+    403: "ModelVerse 拒绝访问：确认密钥权限、账号状态以及套餐是否包含该模型",
+    404: "ModelVerse 接口或模型不存在：检查 LLM_BASE_URL、LLM_MODEL（及 COVER_MODEL）是否仍可用",
+    429: "ModelVerse 触发限流：请求频率超限，请稍后重试",
+}
+
+
+def check_response(resp) -> None:
+    """等价于 raise_for_status，但把常见错误码换成可执行的中文提示。"""
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as error:
+        status = getattr(resp, "status_code", None)
+        hint = API_ERROR_HINTS.get(status) if isinstance(status, int) else None
+        if not hint:
+            raise
+        raw = getattr(resp, "text", "")
+        detail = raw.strip().replace("\n", " ")[:200] if isinstance(raw, str) else ""
+        suffix = f"；服务端返回: {detail}" if detail else ""
+        raise RuntimeError(f"{hint}（HTTP {status}{suffix}）") from error
+
 
 def today_date() -> datetime.date:
     """统一按北京时间划分推荐日期，与运行机器的时区无关。"""
@@ -153,7 +179,7 @@ def call_llm(prompt: str) -> str:
         },
         timeout=120,
     )
-    resp.raise_for_status()
+    check_response(resp)
     payload = resp.json()
     choices = payload.get("choices") if isinstance(payload, dict) else None
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -623,4 +649,8 @@ def _fail_file(msg: str) -> None:
 if __name__ == "__main__":
     result = main()
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["ok"]:
+        # 写成 Actions 注解，失败原因直接显示在运行摘要里，不必翻日志。
+        reason = result.get("report") or result.get("push") or result.get("history") or "任务失败"
+        print("::error::" + str(reason).replace("\n", " ")[:900])
     sys.exit(0 if result["ok"] else 1)

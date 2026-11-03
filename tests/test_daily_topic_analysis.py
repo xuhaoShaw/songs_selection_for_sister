@@ -58,6 +58,16 @@ class ModelVerseTests(unittest.TestCase):
                 app.call_llm("选曲")
         resp.json.assert_not_called()
 
+    def test_auth_failure_points_at_the_secret_to_update(self):
+        resp = Mock()
+        resp.status_code = 401
+        resp.text = '{"error": "invalid api key"}'
+        resp.raise_for_status.side_effect = app.requests.HTTPError("401 Unauthorized")
+        with patch.object(app.requests, "post", return_value=resp):
+            with self.assertRaisesRegex(RuntimeError, "MODELVERSE_API_KEY"):
+                app.call_llm("选曲")
+        resp.json.assert_not_called()
+
     def test_empty_and_truncated_outputs_fail_clearly(self):
         payloads = [
             {}, {"choices": []}, {"choices": [None]},

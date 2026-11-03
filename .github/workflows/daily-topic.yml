@@ -15,6 +15,13 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    # 模型名只在这里定义一次，预检与实际分析共用，避免改了一处漏另一处。
+    env:
+      MODELVERSE_API_KEY: ${{ secrets.MODELVERSE_API_KEY }}
+      LLM_BASE_URL: https://api.modelverse.cn/v1
+      LLM_MODEL: deepseek-v4.1-flash
+      COVER_MODEL: gpt-image-2
+      HISTORY_FILE: song-history.json
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,17 +47,15 @@ jobs:
             const sync = require('./.github/scripts/song-history.cjs');
             await sync({github, context, core, mode: 'restore'});
 
+      - name: Preflight ModelVerse credentials
+        run: python tools/check_modelverse_key.py
+
       - name: Run daily topic analysis
         env:
-          MODELVERSE_API_KEY: ${{ secrets.MODELVERSE_API_KEY }}
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           COVER_ENABLED: "true"
-          COVER_MODEL: gpt-image-2
-          LLM_BASE_URL: https://api.modelverse.cn/v1
-          LLM_MODEL: deepseek-v4.1-flash
-          HISTORY_FILE: song-history.json
         run: python daily_topic_analysis.py
 
       - name: Save song history
@@ -75,3 +80,17 @@ jobs:
             song-history.json
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Notify Feishu on failure
+        if: failure()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$FEISHU_WEBHOOK" ]; then
+            echo "未配置 FEISHU_WEBHOOK，跳过失败通知"
+            exit 0
+          fi
+          curl -sS -m 20 -X POST "$FEISHU_WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"每日选题任务失败，运行日志：$RUN_URL\"}}" > /dev/null
