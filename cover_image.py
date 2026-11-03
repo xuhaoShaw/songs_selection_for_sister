@@ -17,20 +17,39 @@ COVER_SIZE = (1056, 1408)
 
 def build_cover_prompt(data: dict) -> str:
     song = data["songs"][0]
-    context = data.get("holiday_context", {})
+    context = data.get("holiday_context") or {}
+    details = data.get("lead_details") if isinstance(data.get("lead_details"), dict) else {}
+    scene = details.get("cover_scene", "")
+    scene = scene.strip() if isinstance(scene, str) else ""
+    headline = details.get("cover_headline", "")
+    headline = headline if isinstance(headline, str) else ""
     reference = {
         "歌名": song["song"], "原唱": song["artist"],
+        "建议标题": song.get("title", ""),
         "情绪参考": song["reason"],
         "主推说明": data.get("lead", {}).get("reason", song["reason"]),
         # 日常主推不要为了节日硬造主题关联。
         "节日关联": song.get("theme_reason", "") if song.get("is_theme") else "",
         "当天主题": context.get("theme") if song.get("is_theme") else None,
-        "封面短句": data.get("lead_details", {}).get("cover_headline", ""),
+        "封面短句": headline,
+        "画面方案": scene,
     }
+    if scene:
+        scene_rule = "必须严格按照资料中的「画面方案」绘制主体、地点、时间和关键物件，不要改成别的构图。"
+    else:
+        scene_rule = (
+            "资料中的画面方案为空。请只根据歌名、建议标题、情绪参考和节日关联，"
+            "抽出这首歌独有的情节、地点、物件、天气或动作，组成一个具体画面。"
+        )
     return (
         f"生成一张可直接用于小红书音乐翻唱图文笔记的3:4竖版封面，{COVER_SIZE[0]}×{COVER_SIZE[1]}。"
-        "目标是让陌生观众一眼看懂歌曲并对情绪产生兴趣，不保证涨粉。"
-        "根据下面的歌曲情绪资料自由选择适合的场景、配色和视觉主体，"
+        "画面必须来自这首歌本身的内容，让陌生观众一眼看出这首歌在讲什么。"
+        f"{scene_rule}"
+        "主体使用歌曲里的物件、地点、天气、动作或象征物。配色、时间和天气跟着歌曲内容变化，"
+        "可以是白天、黄昏、室内、户外或静物。画面方案没有写到的人物不要额外添加。"
+        "禁止使用这些默认构图，除非歌名或画面方案明确就是该意象，并且画面里还要有这首歌独有的物件："
+        "深夜、窗前或窗边、女生或女孩背对镜头、一个人坐着望向窗外、空房间里的背影、路灯下的孤独剪影。"
+        "目标是让观众对歌曲产生兴趣，不保证涨粉。"
         "电影感、构图简洁，手机缩略图也清晰，避免杂乱。"
         "不限定拍摄地点，不使用楼道作为固定背景，不出现‘楼道清唱’字样。"
         "不要复制专辑封面或明星肖像，不添加平台Logo、水印、歌词、"

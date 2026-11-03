@@ -228,12 +228,17 @@ def gen_topics(excluded=None, holiday_context=None) -> dict:
         '"opening":"可执行的视频开场方式",'
         '"practice_tips":"练习难点和两到三个具体准备步骤",'
         '"cover_headline":"16字以内的封面情绪短句，不写楼道清唱、不编造个人经历",'
+        '"cover_scene":"40到80字的封面画面，写明这首歌独有的主体、地点或物件、时间与配色",'
         '"title_options":["另一种标题角度1","另一种标题角度2"]}}'
         "要求：标题每篇独一无二，禁止出现『翻唱《X》，有没有唱进你心里』式模板；"
         "标签建立场景词矩阵（#楼道清唱/#清唱/#翻唱）+ 情绪词 + 歌名/歌手词。"
         "只为一首主推补充详细拍摄建议，四首副推保持原有歌曲字段。"
         "主推说明需具体但简洁，各详细字段控制在一到两句话；"
         "封面文案突出歌曲情绪或听歌场景，不宣称实时热度或保证涨粉；"
+        "cover_scene 必须能直接画出来，并对应这首歌公认的情节、地点、物件、天气或动作；"
+        "禁止默认写成深夜、窗前、女生背影、一个人坐着望向窗外、空房间或路灯下的孤独剪影；"
+        "只有歌名本身就是该意象时才可以使用，且必须同时写出这首歌独有的物件。"
+        "画面方案不要出现博主本人、楼道、明星肖像或专辑封面；"
         "未核实具体音源时不要编造时间戳、歌词、调性或音域；"
         "不要编造博主的个人经历，开场建议以真实表达或直接开唱为主。"
     )
@@ -331,6 +336,26 @@ def gen_topics(excluded=None, holiday_context=None) -> dict:
     }
 
 
+# 模型容易把封面收成同一种人像；这些构图只有在歌曲本身写明时才保留。
+_DEFAULT_COVER_POSE = re.compile(
+    r"(?:窗前|窗边|窗台|窗户|窗口).{0,16}(?:背对|背影|女生|女孩|坐着|望向)"
+    r"|(?:背对|背影|女生|女孩|一个人).{0,16}(?:窗前|窗边|窗台|窗户|望向窗外)"
+    r"|深夜.{0,8}(?:窗|背影)"
+    r"|路灯.{0,8}(?:剪影|背影)"
+    r"|孤独剪影|背对镜头"
+)
+
+
+def _cover_scene(value) -> str:
+    """只保留能画出歌曲内容的画面；过短、过长或默认人像构图则交给封面提示自行取材。"""
+    if not isinstance(value, str):
+        return ""
+    scene = " ".join(value.split())
+    if not 8 <= len(scene) <= 120 or "楼道" in scene or _DEFAULT_COVER_POSE.search(scene):
+        return ""
+    return scene
+
+
 def _make_lead_details(song: dict, source=None) -> dict:
     """详细建议只绑定合格主推；缺失字段使用不依赖音源的保守建议。"""
     source = source if isinstance(source, dict) else {}
@@ -348,6 +373,7 @@ def _make_lead_details(song: dict, source=None) -> dict:
         headline.strip() if isinstance(headline, str) and 0 < len(headline.strip()) <= 16
         and "\n" not in headline and "楼道" not in headline else ""
     )
+    result["cover_scene"] = _cover_scene(source.get("cover_scene"))
     titles = source.get("title_options")
     result["title_options"] = []
     if isinstance(titles, list):
@@ -368,6 +394,8 @@ def _lead_detail_items(data: dict) -> list:
              ("练习准备", details["practice_tips"])]
     if details["cover_headline"]:
         items.append(("封面文案", details["cover_headline"]))
+    if details["cover_scene"]:
+        items.append(("封面画面", details["cover_scene"]))
     for i, title in enumerate(details["title_options"], 1):
         items.append((f"其他标题 {i}", title))
     return items

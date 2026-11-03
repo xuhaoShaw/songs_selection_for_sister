@@ -57,6 +57,23 @@ class CoverGenerationTests(unittest.TestCase):
         data["lead_details"] = {"cover_headline": "有些思念，唱出来就懂了"}
         self.assertIn('"封面短句": "有些思念，唱出来就懂了"', cover.build_cover_prompt(data))
 
+    def test_prompt_uses_song_scene_and_blocks_default_portrait(self):
+        data = selected()
+        scene = "黄昏菜市场里还在转的绿色电风扇，橘色塑料袋被风吹到半空"
+        data["lead_details"] = {"cover_headline": "有些思念，唱出来就懂了", "cover_scene": scene}
+        prompt = cover.build_cover_prompt(data)
+        self.assertIn(scene, prompt)
+        self.assertIn("必须严格按照资料中的「画面方案」", prompt)
+        self.assertIn("画面方案没有写到的人物不要额外添加", prompt)
+        self.assertIn("禁止使用这些默认构图", prompt)
+        data["lead_details"]["cover_scene"] = ""
+        fallback = cover.build_cover_prompt(data)
+        self.assertIn("抽出这首歌独有的情节", fallback)
+        current = selected()["songs"][0]
+        self.assertEqual(app._make_lead_details(current, {"cover_scene": "深夜窗前一个女生背对镜头"})["cover_scene"], "")
+        self.assertEqual(app._make_lead_details(current, {"cover_scene": "路灯下的孤独剪影"})["cover_scene"], "")
+        self.assertEqual(app._make_lead_details(current, {"cover_scene": scene})["cover_scene"], scene)
+
     def test_headline_validation_and_mismatched_lead(self):
         current = selected()["songs"][0]
         for headline in [None, ["标题"], "楼道清唱", "两行\n标题", "长" * 17]:
