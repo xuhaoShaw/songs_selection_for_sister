@@ -97,9 +97,13 @@ class CoverGenerationTests(unittest.TestCase):
         self.assertEqual(post.call_args.args[0], "https://api.modelverse.cn/v1/images/generations")
         args = post.call_args.kwargs
         self.assertEqual(args["headers"]["Authorization"], "Bearer test-key")
-        self.assertEqual(args["json"]["model"], "gpt-image-2")
+        self.assertEqual(args["json"]["model"], "doubao-seedream-5-0-pro-260628")
         self.assertEqual(args["json"]["size"], "1056x1408")
         self.assertEqual(args["json"]["output_format"], "png")
+        self.assertEqual(args["json"]["response_format"], "b64_json")
+        self.assertIs(args["json"]["watermark"], False)
+        self.assertNotIn("quality", args["json"])
+        self.assertNotIn("output_compression", args["json"])
         self.assertEqual(args["timeout"], 300)
 
     def test_https_url_download_does_not_send_api_key(self):

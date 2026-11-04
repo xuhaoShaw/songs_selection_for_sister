@@ -66,15 +66,20 @@ def build_cover_prompt(data: dict) -> str:
 
 
 def generate_cover(data: dict, report_dir: str, date, api_key: str,
-                   base_url: str, model: str = "gpt-image-2") -> dict:
+                   base_url: str, model: str = "doubao-seedream-5-0-pro-260628") -> dict:
     if not api_key:
         raise RuntimeError("未配置 MODELVERSE_API_KEY")
     response = requests.post(
         base_url.rstrip("/") + "/images/generations",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"model": model, "prompt": build_cover_prompt(data),
-              "size": f"{COVER_SIZE[0]}x{COVER_SIZE[1]}", "quality": "high", "output_format": "png",
-              "output_compression": 100},
+        json={
+            "model": model,
+            "prompt": build_cover_prompt(data),
+            "size": f"{COVER_SIZE[0]}x{COVER_SIZE[1]}",
+            "output_format": "png",
+            "response_format": "b64_json",
+            "watermark": False,
+        },
         timeout=300,
     )
     response.raise_for_status()
