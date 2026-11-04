@@ -6,7 +6,7 @@
 环境变量：
   MODELVERSE_API_KEY  必填
   LLM_BASE_URL        可选，默认 https://api.modelverse.cn/v1
-  LLM_MODEL           可选，默认 deepseek-v4.1-flash
+  LLM_MODEL           可选，默认 deepseek-v4.1-flash-1017
 """
 import os
 import sys
@@ -18,7 +18,7 @@ import requests
 BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.modelverse.cn/v1").rstrip("/")
 RAW_KEY = os.environ.get("MODELVERSE_API_KEY", "")
 API_KEY = RAW_KEY.strip()
-MODEL = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash")
+MODEL = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash-1017")
 
 
 def fail(message: str) -> int:

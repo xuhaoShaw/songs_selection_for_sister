@@ -30,13 +30,13 @@ class ModelVerseTests(unittest.TestCase):
         resp.json.return_value = {"choices": [{"finish_reason": "stop", "message": {"content": "OK"}}]}
         with patch.object(app.requests, "post", return_value=resp) as post, \
                 patch.object(app, "LLM_BASE_URL", "https://api.modelverse.cn/v1/"), \
-                patch.object(app, "LLM_MODEL", "deepseek-v4.1-flash"):
+                patch.object(app, "LLM_MODEL", "deepseek-v4.1-flash-1017"):
             self.assertEqual(app.call_llm("只回复 OK"), "OK")
         resp.raise_for_status.assert_called_once()
         self.assertEqual(post.call_args.args[0], "https://api.modelverse.cn/v1/chat/completions")
         args = post.call_args.kwargs
         self.assertEqual(args["headers"]["Authorization"], "Bearer test-key")
-        self.assertEqual(args["json"]["model"], "deepseek-v4.1-flash")
+        self.assertEqual(args["json"]["model"], "deepseek-v4.1-flash-1017")
         self.assertEqual(args["json"]["messages"][0]["role"], "system")
         self.assertEqual(args["json"]["messages"][1], {"role": "user", "content": "只回复 OK"})
         self.assertEqual(args["json"]["stream"], False)

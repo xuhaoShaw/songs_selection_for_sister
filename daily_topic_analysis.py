@@ -10,7 +10,7 @@
 环境变量：
   MODELVERSE_API_KEY    必填，ModelVerse API Key
   LLM_BASE_URL          可选，默认 https://api.modelverse.cn/v1
-  LLM_MODEL             可选，默认 deepseek-v4.1-flash
+  LLM_MODEL             可选，默认 deepseek-v4.1-flash-1017
   REPORT_DIR            可选，报告目录，默认 daily-analysis
   HISTORY_FILE          可选，持久化歌曲历史路径，默认 song-history.json
   FEISHU_WEBHOOK        可选，飞书群自定义机器人 webhook（推荐）
@@ -42,7 +42,7 @@ REPORT_DIR = os.environ.get("REPORT_DIR", "daily-analysis")
 HISTORY_FILE = os.environ.get("HISTORY_FILE", "song-history.json")
 LLM_API_KEY = os.environ.get("MODELVERSE_API_KEY", "")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.modelverse.cn/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash")
+LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash-1017")
 COVER_ENABLED = os.environ.get("COVER_ENABLED", "true").lower() not in ("false", "0", "no")
 COVER_MODEL = os.environ.get("COVER_MODEL", "doubao-seedream-5-0-pro-260628")
 FEISHU_WEBHOOK = os.environ.get("FEISHU_WEBHOOK", "")
